@@ -4,26 +4,31 @@
 #include<sstream>
 #include<fstream>
 
-struct Coord{
-	int x, y;
-};
-
 enum Figure{
     line = 0,
     triangle = 1,
     rectangle = 2,
-    elipse = 3,
+    ellipse = 3,
     curve = 4,
-    circle = 5,
-    square = 6
+    selection = 5,
+    circle = 6,
+    square = 7
 };
 
-struct Shape{
+struct Coord{
+	int x, y;
+};
+
+class Shape{
+public:
     std::vector<Coord> points;
     Figure type;
     Color edge;
     Color inside;
     bool filled;
+    unsigned zIndex;
+
+    bool selected = false;
 
     std::string to_string(){
         std::ostringstream oss;
@@ -33,134 +38,541 @@ struct Shape{
         oss<<inside.r<<' '<<inside.g<<' '<<inside.b<<' ';
         oss<<filled;
 
-        for (auto point : points) 
+        for (Coord point : points) 
             oss<<' '<<point.x<<' '<<point.y;
         
         return oss.str();
     }
+
+    Coord getMidPoint(){
+        Coord midPoint = {0,0};
+        for (Coord point : points){
+            midPoint.x += point.x;
+            midPoint.y += point.y;
+        }
+
+        midPoint.x /= points.size();
+        midPoint.y /= points.size();
+
+        return midPoint;
+    }
+
+    int getVertice(Coord p){
+        int dx, dy;
+
+        for (int i = 0; i < points.size(); ++i){
+            dx = std::abs(p.x - points[i].x);
+            dy = std::abs(p.y - points[i].y);
+
+            if (dx < 10 && dy < 10) return i;
+        }
+        
+        Coord midPoint = getMidPoint();
+        dx = std::abs(p.x - midPoint.x);
+        dy = std::abs(p.y - midPoint.y);
+
+        if (dx < 10 && dy < 10) return points.size();
+
+        return -1;
+    }
+
+    void modifyShape(int vertice, Coord p, bool ctrl){
+        points[vertice] = p;
+        
+        switch(type){
+            case ellipse:
+            case rectangle:
+                if (!ctrl && type == rectangle) break;
+                if (vertice != 0){
+                    points[0].x = points[2].x;
+                    points[0].y = points[1].y;
+                }
+                if (vertice != 1){
+                    points[1].x = points[3].x;
+                    points[1].y = points[0].y;
+                }
+                if (vertice != 2){
+                    points[2].x = points[0].x;
+                    points[2].y = points[3].y;
+                }
+                if (vertice != 3){
+                    points[3].x = points[1].x;
+                    points[3].y = points[2].y; 
+                }
+                break;
+            case circle:
+            case square:
+                if (!ctrl && type == square) break;
+
+                switch(vertice){
+                    case 0:
+                        points[0].y = points[1].y;
+                        points[2].x = points[0].x;
+                        points[2].y = points[0].y - std::abs(points[0].x - points[1].x);
+                        points[3].y = points[2].y;
+                        break;
+                    case 1:
+                        points[1].y = points[0].y;
+                        points[3].x = points[1].x;
+                        points[3].y = points[1].y - std::abs(points[1].x - points[0].x);
+                        points[2].y = points[3].y;
+                        break;
+                    case 2:
+                        points[2].y = points[3].y;
+                        points[0].x = points[2].x;
+                        points[0].y = points[2].y + std::abs(points[2].x - points[3].x);
+                        points[1].y = points[0].y;
+                        break;
+                    case 3:
+                        points[3].y = points[2].y;
+                        points[1].x = points[3].x;
+                        points[1].y = points[3].y + std::abs(points[3].x - points[2].x);
+                        points[0].y = points[1].y;
+                        break;
+                }
+        }
+    }
+
+    void elevateDegree() {
+        if (points.empty() || type != curve) {
+            return;
+        }
+
+        int n = points.size() - 1;
+        std::vector<Coord> Q(n + 2);
+
+        Q[0] = points[0];
+        Q[n + 1] = points[n];
+
+        for (int i = 1; i <= n; ++i) {
+            double ratio = static_cast<double>(i) / (n + 1);
+
+            double newX = ratio * points[i - 1].x + (1.0 - ratio) * points[i].x;
+            double newY = ratio * points[i - 1].y + (1.0 - ratio) * points[i].y;
+
+            // Round to nearest int to preserve the curve's shape as best as possible
+            Q[i].x = static_cast<int>(std::round(newX));
+            Q[i].y = static_cast<int>(std::round(newY));
+        }
+
+        points = Q;
+    }
 };
 
-// struct Node{
-//     Shape* shapes;
-//     Node* children[4];
-//     int x0, x1, y0, y1;
-//     int i;
+struct quadNode{
+    std::vector<int> shapes;
+    quadNode* children = nullptr;
+    Coord topLeft, bottomRight;
 
-//     Node(){
-//         i = 0;
-//         shapes = new Shape[5];
+    bool isLeaf(){
+        return children == nullptr;
+    }
+};
 
-//         children[0] = nullptr;
-//     }
+class proyecto1;
 
-//     void add(Shape s){
-//         shapes[i] = s;
-//         ++i;
-//     }
-// };
+class quadTree{
+private:
+    quadNode root;
+    int maxDepth = 8;
+    int maxShapes = 5;
 
-// class proyecto1;
+    void split(quadNode &n, std::vector<Shape> &shapes, int depth){
+        n.children = new quadNode[4];
 
-// class quadTree{
-// private:
-//     Node* root;
+        n.children[0].topLeft.x = n.topLeft.x;
+        n.children[0].topLeft.y = n.topLeft.y;
+        n.children[0].bottomRight.x = (n.topLeft.x + n.bottomRight.x)/2;
+        n.children[0].bottomRight.y = (n.topLeft.y + n.bottomRight.y)/2;//Arriba a la izquierda
 
-//     void addShape(Shape s, Node* n){
-//         if (s.p1.x < n->x0 || s.p1.x > n->x1 || s.p1.y < n->y0 || s.p1.y > n->y1) return;
+        n.children[1].topLeft.x = (n.topLeft.x + n.bottomRight.x)/2;
+        n.children[1].topLeft.y = n.topLeft.y;
+        n.children[1].bottomRight.x = n.bottomRight.x;
+        n.children[1].bottomRight.y = (n.topLeft.y + n.bottomRight.y)/2;//Arriba a la derecha
 
-//         if (n->children[0] == nullptr){ //Es una hoja
-//             n->add(s);
-//             evaluate(n);
-//             return;
-//         }
+        n.children[2].topLeft.x = n.topLeft.x;
+        n.children[2].topLeft.y = (n.topLeft.y + n.bottomRight.y)/2;
+        n.children[2].bottomRight.x = (n.topLeft.x + n.bottomRight.x)/2;
+        n.children[2].bottomRight.y = n.bottomRight.y;//Abajo a la izquierda
 
-//         for (int i = 0; i < 4; ++i) addShape(s, n->children[i]);
-//     }
+        n.children[3].topLeft.x = (n.topLeft.x + n.bottomRight.x)/2;
+        n.children[3].topLeft.y = (n.topLeft.y + n.bottomRight.y)/2;
+        n.children[3].bottomRight.x = n.bottomRight.x;
+        n.children[3].bottomRight.y = n.bottomRight.y;//Abajo a la derecha
 
-//     //Si tiene 5 elementos se subdivide
-//     void evaluate(Node* n){
-//         if (n->i < 5) return;
+        for (int i : n.shapes) add(i, shapes, n, depth);
 
-//         for (int i = 0; i < 4; ++i) n->children[i] = new Node();
+        std::vector<int>().swap(n.shapes);
+    }
 
-//         n->children[0]->x0 = n->x0;
-//         n->children[0]->x1 = (n->x0 + n->x1)/2;
-//         n->children[0]->y0 = n->y0;
-//         n->children[0]->y1 = (n->y0 + n->y1)/2;//Arriba a la izquierda
+    bool lineInZone(Coord a, Coord b, Coord topLeft, Coord bottomRight){
+        int dx = a.x - b.x;
+        int dy = a.y - b.y;//b->a
 
-//         n->children[1]->x0 = (n->x0 + n->x1)/2;
-//         n->children[1]->x1 = n->x1;
-//         n->children[1]->y0 = n->y0;
-//         n->children[1]->y1 = (n->y0 + n->y1)/2;//Arriba a la derecha
+        if (dx == 0) return a.x > topLeft.x && a.x <= bottomRight.x;
+        if (dy == 0) return a.y > topLeft.y && a.y <= bottomRight.y;
 
-//         n->children[2]->x0 = n->x0;
-//         n->children[2]->x1 = (n->x0 + n->x1)/2;
-//         n->children[2]->y0 = (n->y0 + n->y1)/2;
-//         n->children[2]->y1 = n->y1;//Abajo a la izquierda
+        float txMin, txMax, tyMin, tyMax, tEntry, tExit;
 
-//         n->children[3]->x0 = (n->x0 + n->x1)/2;
-//         n->children[3]->x1 = n->x1;
-//         n->children[3]->y0 = (n->y0 + n->y1)/2;
-//         n->children[3]->y1 = n->y1;//Abajo a la derecha
+        //Se despeja la ecuación paramétrica en los extremos
+        txMin = static_cast<float>(topLeft.x - b.x)/dx;
+        txMax = static_cast<float>(bottomRight.x - b.x)/dx;
+        tyMin = static_cast<float>(topLeft.y - b.y)/dy;
+        tyMax = static_cast<float>(bottomRight.y - b.y)/dy;
 
-//         for (int i = 0; i < 5; ++i) addShape(n->shapes[i], n);
+        if (txMin > txMax) std::swap(txMin, txMax);
+        if (tyMin > tyMax) std::swap(tyMin, tyMax);
+
+        tEntry = std::max(txMin, tyMin);
+        tExit = std::min(txMax, tyMax);
+
+        return tEntry <= tExit && tEntry <=1 && tExit >= 0;
+    }
+
+    bool triangleEdgeInZone(Coord a, Coord b, Coord c, Coord topLeft, Coord bottomRight){
+        return lineInZone(a, b, topLeft, bottomRight)
+            || lineInZone(b, c, topLeft, bottomRight)
+            || lineInZone(c, a, topLeft, bottomRight);
+    }
+
+    bool filledtriangleInZone(Coord a, Coord b, Coord c, Coord topLeft, Coord bottomRight){
+        Coord edges[3] = {
+            {b.x - a.x, b.y - a.y},
+            {c.x - b.x, c.y - b.y},
+            {a.x - c.x, a.y - c.y}
+        };
+
+        for (int i = 0; i < 3; ++i) {
+            Coord normal = {-edges[i].y, edges[i].x};
+
+            int pT1 = (a.x * normal.x) + (a.y * normal.y);
+            int pT2 = (b.x * normal.x) + (b.y * normal.y);
+            int pT3 = (c.x * normal.x) + (c.y * normal.y);
+
+            int triMin, triMax;
+            triMin = std::min({pT1, pT2, pT3});
+            triMax = std::max({pT1, pT2, pT3});
+
+            int pC1 = (topLeft.x * normal.x) + (topLeft.y * normal.y);
+            int pC2 = (bottomRight.x * normal.x) + (topLeft.y * normal.y);
+            int pC3 = (topLeft.x * normal.x) + (bottomRight.y * normal.y);
+            int pC4 = (bottomRight.x * normal.x) + (bottomRight.y * normal.y);
+
+            int boxMin = std::min({pC1, pC2, pC3, pC4});
+            int boxMax = std::max({pC1, pC2, pC3, pC4});
+
+            if (triMax < boxMin || triMin > boxMax) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool rectangleEdgeInZone(Coord a, Coord b, Coord c, Coord d, Coord topLeft, Coord bottomRight){
+        return lineInZone(a, b, topLeft, bottomRight)
+            || lineInZone(b, d, topLeft, bottomRight)
+            || lineInZone(d, c, topLeft, bottomRight)
+            || lineInZone(c, a, topLeft, bottomRight);
+    }
+
+    bool filledRectangleInZone(Coord a, Coord b, Coord c, Coord d, Coord topLeft, Coord bottomRight){
+        return filledtriangleInZone(a, b, c, topLeft, bottomRight)
+            || filledtriangleInZone(c, b, d, topLeft, bottomRight);
+    }
+
+    bool filledEllipseInZone(Coord a, Coord b, Coord topLeft, Coord bottomRight){
+        Coord center;
+
+        int width = std::abs((a.x - b.x) / 2);
+        int height = std::abs((a.y - b.y) / 2);
+
+        center.x = (a.x + b.x) / 2;
+        center.y = (a.y + b.y) / 2;
+
+        float minX_prime = static_cast<float>(topLeft.x - center.x) / width;
+        float maxX_prime = static_cast<float>(bottomRight.x - center.x) / width;
+        float minY_prime = static_cast<float>(topLeft.y - center.y) / height;
+        float maxY_prime = static_cast<float>(bottomRight.y - center.y) / height;
+
+        float closestX = std::clamp(0.0f, minX_prime, maxX_prime);
+        float closestY = std::clamp(0.0f, minY_prime, maxY_prime);
+
+        float distanceSquared = (closestX * closestX) + (closestY * closestY);
         
-//         delete[] n->shapes;
+        return distanceSquared <= 1.0f;
+    }
 
-//         n->shapes = nullptr;
-//     }
-
-//     void delNode(Node* n){
-//         if (n->children[0] == nullptr){
-//             delete[] n->shapes;
-//             delete n;
-//             return;
-//         }
-
-//         for (int i = 0; i < 4; ++i) delNode(n->children[i]);
-
-//         delete n;
-//     }
-
-//     void draw(proyecto1* p1, Node* n);
-// public:
-//     quadTree(int width, int height){
-//         root = new Node();
+    bool ellipseEdgeInZone(Coord a, Coord b, Coord topLeft, Coord bottomRight) {
+        float width = std::abs((a.x - b.x) / 2.0f);
+        float height = std::abs((a.y - b.y) / 2.0f);
         
-//         root->x0 = 0;
-//         root->x1 = width;
-//         root->y0 = 0;
-//         root->y1 = height;
-//     }
-//     quadTree(){
-//     }
+        float centerX = (a.x + b.x) / 2.0f;
+        float centerY = (a.y + b.y) / 2.0f;
 
-//     ~quadTree(){
-//         delNode(root);
-//     }
+        float minX_prime = (topLeft.x - centerX) / width;
+        float maxX_prime = (bottomRight.x - centerX) / width;
+        float minY_prime = (topLeft.y - centerY) / height;
+        float maxY_prime = (bottomRight.y - centerY) / height;
 
-//     void addShape(Shape s){
-//         addShape(s, root);
-//     }
+        float closestX = std::clamp(0.0f, minX_prime, maxX_prime);
+        float closestY = std::clamp(0.0f, minY_prime, maxY_prime);
+        float closestDistSq = (closestX * closestX) + (closestY * closestY);
 
-//     void clear(){
-//         int width, height;
+        if (closestDistSq > 1.0f) {
+            return false; 
+        }
 
-//         width = root->x1;
-//         height = root->y1;
+        float maxDistX = std::max(std::abs(minX_prime), std::abs(maxX_prime));
+        float maxDistY = std::max(std::abs(minY_prime), std::abs(maxY_prime));
+        float furthestDistSq = (maxDistX * maxDistX) + (maxDistY * maxDistY);
 
-//         delNode(root);
+        if (furthestDistSq < 1.0f) {
+            return false;
+        }
 
-//         root = new Node();
+        return true;
+    }
+
+    Coord lerp(Coord a, Coord b, float t) {
+        return { static_cast<int>(a.x + (b.x - a.x) * t), static_cast<int>(a.y + (b.y - a.y) * t)};
+    }
+
+    void splitBezierN(const std::vector<Coord>& curve, std::vector<Coord>& left, std::vector<Coord>& right) {
+        size_t n = curve.size();
+        if (n == 0) return;
+
+        left.resize(n);
+        right.resize(n);
+
+        std::vector<Coord> temp = curve;
+
+        left[0] = temp[0];
+        right[n - 1] = temp[n - 1];
+
+        for (size_t i = 1; i < n; ++i) {
+            for (size_t j = 0; j < n - i; ++j) {
+                temp[j] = lerp(temp[j], temp[j + 1], 0.5f);
+            }
+            left[i] = temp[0];
+            right[n - 1 - i] = temp[n - 1 - i];
+        }
+    }
+
+    bool curveInZone(const std::vector<Coord>& curve, Coord topLeft, Coord bottomRight, int depth = 0) {
+        if (curve.empty()) return false;
+
+        // A. Calculate the AABB of all n control points
+        int minX = curve[0].x, maxX = curve[0].x;
+        int minY = curve[0].y, maxY = curve[0].y;
         
-//         root->x0 = 0;
-//         root->x1 = width;
-//         root->y0 = 0;
-//         root->y1 = height;
-//     }
+        for (size_t i = 1; i < curve.size(); ++i) {
+            minX = std::min(minX, curve[i].x);
+            maxX = std::max(maxX, curve[i].x);
+            minY = std::min(minY, curve[i].y);
+            maxY = std::max(maxY, curve[i].y);
+        }
 
-//     void draw(proyecto1* p1);
-// };
+        if (minX > bottomRight.x || maxX < topLeft.x || minY > bottomRight.y || maxY < topLeft.y) {
+            return false; 
+        }
+
+        const int MAX_DEPTH = 6;
+        if (depth >= MAX_DEPTH) {
+            return true; 
+        }
+
+        std::vector<Coord> leftCurve;
+        std::vector<Coord> rightCurve;
+
+        leftCurve.reserve(curve.size());
+        rightCurve.reserve(curve.size());
+
+        splitBezierN(curve, leftCurve, rightCurve);
+
+        return curveInZone(leftCurve, topLeft, bottomRight, depth + 1)
+            || curveInZone(rightCurve, topLeft, bottomRight, depth + 1);
+    }
+
+    bool insideZone(Shape &shape, quadNode &n){
+        int maxX, minX, maxY, minY;
+
+        maxX = shape.points[0].x;
+        minX = maxX;
+        maxY = shape.points[0].y;
+        minY = maxY;
+        
+        for (const Coord &point : shape.points){
+            minX = std::min(minX, point.x);
+            maxX = std::max(maxX, point.x);
+            minY = std::min(minY, point.y);
+            maxY = std::max(maxY, point.y);
+        }
+
+        //Bounding box para evitar cálculos innecesarios :p
+        if (maxX <= n.topLeft.x || minX > n.bottomRight.x ||  maxY <= n.topLeft.y || minY > n.bottomRight.y)
+            return false;
+        
+        switch (shape.type){
+            case line:
+                return lineInZone(shape.points[0], shape.points[1], n.topLeft, n.bottomRight);
+            case triangle:
+                if (!shape.filled){
+                    return triangleEdgeInZone(shape.points[0], shape.points[1], shape.points[2], n.topLeft, n.bottomRight);
+                }
+
+                return filledtriangleInZone(shape.points[0], shape.points[1], shape.points[2], n.topLeft, n.bottomRight);
+            case square:
+            case rectangle:
+                if (!shape.filled){
+                    return rectangleEdgeInZone(shape.points[0], shape.points[1], shape.points[2], shape.points[3], n.topLeft, n.bottomRight);
+                }
+
+                return filledRectangleInZone(shape.points[0], shape.points[1], shape.points[2], shape.points[3], n.topLeft, n.bottomRight);
+            case ellipse:
+            case circle:
+                if (!shape.filled){
+                    return ellipseEdgeInZone(shape.points[0], shape.points[3], n.topLeft, n.bottomRight);
+                }   
+
+                return filledEllipseInZone(shape.points[0], shape.points[3], n.topLeft, n.bottomRight);
+            case curve:
+                return curveInZone(shape.points, n.topLeft, n.bottomRight);
+        }
+
+        return true;
+    }
+
+    bool insideZone(Coord mouse, quadNode &n){
+        return mouse.x > n.topLeft.x && mouse.y > n.topLeft.y
+            && mouse.x <= n.bottomRight.x && mouse.y <= n.bottomRight.y;
+    }
+
+    void add(int i, std::vector<Shape> &shapes, quadNode &n, int depth){
+        if (n.isLeaf()){
+            n.shapes.push_back(i);
+            
+            if (n.shapes.size() >= maxShapes && depth + 1 < maxDepth)
+                split(n, shapes, depth);
+                
+            return;
+        }
+        
+        for (int j = 0; j < 4; ++j){
+            if (insideZone(shapes[i], n.children[j]))
+                add(i, shapes, n.children[j], depth + 1);           
+        }  
+    }
+
+    int getIndexInNode(Coord mouse, std::vector<Shape> &shapes, quadNode &n){
+        Coord topLeft = {mouse.x - 2, mouse.y - 2};
+        Coord bottomRight = {mouse.x + 2, mouse.y + 2};
+
+        for (int i = 0; i < n.shapes.size(); ++i){
+            int j = n.shapes[i];
+
+            switch (shapes[j].type){
+                case line:
+                    if (lineInZone(shapes[j].points[0], shapes[j].points[1], topLeft, bottomRight)) return j;
+                    break;
+                case triangle:
+                    if (!shapes[j].filled){
+                        if (triangleEdgeInZone(shapes[j].points[0], shapes[j].points[1], shapes[j].points[2], topLeft, bottomRight)) return j;
+                        
+                        break;
+                    }
+
+                    if (filledtriangleInZone(shapes[j].points[0], shapes[j].points[1], shapes[j].points[2], topLeft, bottomRight)) return j;
+                    
+                    break;
+                case square:
+                case rectangle:
+                    if (!shapes[j].filled){
+                        if (rectangleEdgeInZone(shapes[j].points[0], shapes[j].points[1], shapes[j].points[2], shapes[j].points[3], topLeft, bottomRight)) return j;
+
+                        break;
+                    }
+
+                    if (filledRectangleInZone(shapes[j].points[0], shapes[j].points[1], shapes[j].points[2], shapes[j].points[3], topLeft, bottomRight)) return j;
+
+                    break;
+                case ellipse:
+                case circle:
+                    if (!shapes[j].filled){
+                        if (ellipseEdgeInZone(shapes[j].points[0], shapes[j].points[3], topLeft, bottomRight)) return j;
+
+                        break;
+                    }   
+
+                    if (filledEllipseInZone(shapes[j].points[0], shapes[j].points[3], topLeft, bottomRight)) return j;
+
+                    break;
+                case curve:
+                    if (curveInZone(shapes[j].points, topLeft, bottomRight)) return j;
+
+                    break;
+                }
+        }
+        return -1;
+    }
+
+    int getIndex(Coord mouse, std::vector<Shape> &shapes, quadNode &n){
+        if (n.isLeaf()){
+            return getIndexInNode(mouse, shapes, n);
+        }
+
+        for (int j = 0; j < 4; ++j){
+            if (insideZone(mouse, n.children[j])){
+                int i = getIndex(mouse, shapes, n.children[j]);
+
+                if (i != -1) return i;
+            }
+        }
+
+        return -1;
+    }
+
+    void delQuadNode(quadNode &n){
+        if (n.isLeaf()){
+            std::vector<int>().swap(n.shapes);
+            return;
+        }
+
+        for (int i = 0; i < 4; ++i) delQuadNode(n.children[i]);
+
+        delete[] n.children;
+        n.children = nullptr;
+    }
+
+    void draw(proyecto1 *p1, quadNode &n);
+public:
+    quadTree(int width, int height){
+        root.topLeft = {0,0};
+        root.bottomRight = {width, height};
+    }
+    quadTree(){
+    }
+
+    ~quadTree(){
+        delQuadNode(root);
+    }
+
+    void clear(){
+        delQuadNode(root);
+    }
+
+    void add(std::vector<Shape> &shapes, int i = 0){
+        add(i, shapes, root, 0);
+    }
+
+    int getIndex(Coord mouse, std::vector<Shape> &shapes){
+        return getIndex(mouse, shapes, root);
+    }
+
+    void draw(proyecto1 *p1){
+        draw(p1, root);
+    }
+};
 
 class proyecto1 : public Engine2D {
 private:
@@ -173,41 +585,106 @@ private:
     Coord p1, p2;
     std::vector<Shape> shapes;
     bool ctrl = false;
-    bool incompleteFigure = false;
+    bool incompleteShape = false;
     Color colorRelleno = Color(0.0f, 0.0f, 1.0f);
-    //quadTree qTree;
-    //bool drawTree = false;
+    
+    quadTree qTree;
+    bool drawTree = false;
+
+    int currentShape = -1;
+    int currentVertice = -1;
     
     bool fill = false;
 
-    const char* items[5] = {"Linea", "Triangulo", "Rectangulo", "Elipse", "Curva"};
+    unsigned zIndex = 0;
+
+    ImGuiIO& io = ImGui::GetIO();
+
+    //Para ctrl+z y ctrl+y
+    int savedStates = 1;
+    int currentState = 1;
+    int statesBehind = 0;
+
+    const char* items[6] = {"Linea", "Triangulo", "Rectangulo", "Elipse", "Curva", "Seleccion"};
 public:
     //Originalmente 1024x600
     proyecto1(): Engine2D(1280, 720, "Proyecto #1 - Gestion y Despliegue de Primitivas") {
-        //qTree = quadTree(width, height);
+        qTree = quadTree(width, height);
     }
     void setup() override {
         clear(colorFondo);
+        saveState(".state0");
         std::cout << "Motor inicializado exitosamente." << std::endl;
     }
     // Eventos
     void onkeyDown(int key) override {
+        if (ImGui::IsAnyItemActive()) return;
+
         if (key == GLFW_KEY_SPACE) {
             shapes.clear();
-            //qTree.clear();
-            incompleteFigure = false;
+            qTree.clear();
+            incompleteShape = false;
             dibujando = false;
+
+            currentShape = -1;
+
+            saveState(".state" + std::to_string(currentState));
+            currentState = (currentState + 1) % 5;
         }
         if (key == GLFW_KEY_LEFT_CONTROL) ctrl = true;
-        if (key == GLFW_KEY_Q){
-            //drawTree = !drawTree;
-        }
+        if (key == GLFW_KEY_Q) drawTree = !drawTree;
         if (key == GLFW_KEY_R) fill = !fill;
 
-        if (key > GLFW_KEY_0 && key < GLFW_KEY_6){
-            mode = static_cast<Figure>(key - 49);
+        if (key == GLFW_KEY_DELETE && currentShape != -1){
+            shapes.erase(shapes.begin() + currentShape);
 
-            if (incompleteFigure) incompleteFigure = false;
+            qTree.clear();
+
+            for (int i = 0; i < shapes.size(); ++i) qTree.add(shapes, i);
+        }
+
+        if (key > GLFW_KEY_0 && key < GLFW_KEY_7){
+            mode = static_cast<Figure>(key - 49);
+            if (incompleteShape){
+                incompleteShape = false;  
+            }
+            
+            if (currentShape != -1) shapes[currentShape].selected = false;
+            currentShape = -1;
+            return;
+        }
+
+        if (ctrl){
+            if (key == GLFW_KEY_Z){
+                std::cout<<"ctrl+z"<<std::endl;
+                if (savedStates <= 1) return;
+
+                currentState -= 2;
+                if (currentState < 0) currentState = 5 + currentState;
+
+                if (!loadState(".state" + std::to_string(currentState))){
+                    currentState = (currentState + 2) % 5;
+                    return;
+                }
+                
+                currentState = (currentState + 1) % 5;
+                --savedStates;
+                ++statesBehind;
+            }else if (key == GLFW_KEY_Y){
+                std::cout<<"ctrl+y"<<std::endl;
+                if (statesBehind <= 0) return;
+
+                --statesBehind;
+
+                if (!loadState(".state" + std::to_string(currentState))){
+                    ++statesBehind;
+                    if (currentState < 0) currentState = 4;
+                }
+
+                currentState = (currentState + 1) % 5;
+
+                ++savedStates;
+            }
         }
     }
     void onkeyUp(int key) override {
@@ -216,64 +693,115 @@ public:
         }
     }
     void onMouseButtonDown(int button, double x, double y) override {
-        static ImGuiIO& io = ImGui::GetIO();
-
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             if (!io.WantCaptureMouse) dibujando = true;
             else return;
         }else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-            if (mode == curve) incompleteFigure = false;
+            if (mode == curve && incompleteShape) {
+                incompleteShape = false;
+                qTree.add(shapes);
+                savedStates += savedStates < 5 ? 1 : 0;
+
+                saveState(".state" + std::to_string(currentState));
+                
+                currentState = (currentState + 1) % 5;
+            }
             return;
-        }else{
-            return;
-        }
+        }else return;
+        
 
         p1 = {static_cast<int>(x), static_cast<int>(y)};
         switch (mode){
             case triangle:
-                if (incompleteFigure){
+                if (incompleteShape){
                     shapes.back().points[2] = p1;
-                    incompleteFigure = false;
+                    incompleteShape = false;
                     dibujando = false;
                 }else{
-                    shapes.push_back({{p1, p1, p1}, triangle, colorBorde, colorRelleno, fill});
-                    incompleteFigure = true;
+                    shapes.push_back({{p1, p1, p1}, triangle, colorBorde, colorRelleno, fill, zIndex});
+                    incompleteShape = true;
                 }
                 break;
             case rectangle:
                 if (ctrl){
-                    shapes.push_back({{p1, p1, p1, p1}, square, colorBorde, colorRelleno, fill});
+                    shapes.push_back({{p1, p1, p1, p1}, square, colorBorde, colorRelleno, fill, zIndex});
                     break;
                 }
-                shapes.push_back({{p1, p1, p1, p1}, mode, colorBorde, colorRelleno, fill});
+                shapes.push_back({{p1, p1, p1, p1}, mode, colorBorde, colorRelleno, fill, zIndex});
                 break;
-            case elipse:
+            case ellipse:
                 if (ctrl){
-                    shapes.push_back({{p1, p1}, circle, colorBorde, colorRelleno, fill});
+                    shapes.push_back({{p1, p1, p1, p1}, circle, colorBorde, colorRelleno, fill, zIndex});
                     break;
                 }
-                shapes.push_back({{p1, p1}, mode, colorBorde, colorRelleno, fill});
+                shapes.push_back({{p1, p1, p1, p1}, mode, colorBorde, colorRelleno, fill, zIndex});
                 break;
             case curve:
-                if (incompleteFigure){
+                if (incompleteShape){
                     shapes.back().points.push_back(p1);
                 }else{
-                    shapes.push_back({{p1}, curve, colorBorde, colorRelleno, fill});
-                    incompleteFigure = true;
+                    shapes.push_back({{p1}, curve, colorBorde, colorRelleno, false, zIndex});
+                    incompleteShape = true;
                 }
                 dibujando = false;
                 break;
+            case selection:{
+                if (currentShape != -1){
+                    currentVertice = shapes[currentShape].getVertice(p1);
+                    if (currentVertice != -1) return;
+                }
+
+                int newShape = qTree.getIndex(p1, shapes);
+
+                if (currentShape != -1 && newShape != currentShape){
+                    shapes[currentShape].selected = false;
+                }
+
+                currentShape = newShape;
+
+                if (currentShape == -1){
+                    currentVertice = -1;
+                    return;
+                }
+
+                shapes[currentShape].selected = true;
+
+                shapes[currentShape].zIndex = zIndex;
+
+                break;
+            }
+            case line:
+                shapes.push_back({{p1, p1}, mode, colorBorde, colorRelleno, false, zIndex});
             default:
-                shapes.push_back({{p1, p1}, mode, colorBorde, colorRelleno, fill});
+                shapes.push_back({{p1, p1}, mode, colorBorde, colorRelleno, fill, zIndex});
                 break;
         }
+
+        ++zIndex;
     }
     void onMouseButtonUp(int button, double x, double y) override {
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             dibujando = false;
-        }
 
-        //qTree.addShape(shapes.back());
+            if (incompleteShape) return;
+
+            savedStates += savedStates < 5 ? 1 : 0;
+
+            saveState(".state" + std::to_string(currentState));
+
+            currentState = (currentState + 1) % 5;
+
+            if (shapes.size() == 0) return;
+            if (mode == selection){
+                qTree.clear();
+
+                for (int i = 0; i < shapes.size(); ++i) qTree.add(shapes, i);
+
+                return;
+            }
+
+            qTree.add(shapes);
+        }      
     }
     // Evento de movimiento continuo
     void onMouseMove(double x, double y) override {
@@ -283,7 +811,8 @@ public:
 
         switch (mode){
             case rectangle:
-                if (shapes.back().type == square){
+            case ellipse:
+                if (shapes.back().type != mode){
                     int dir = p2.y > p1.y ? 1 : -1;
                     shapes.back().points[1].x = p2.x;
                     shapes.back().points[2].y = p1.y + std::abs(shapes.back().points[0].x - p2.x)*dir;
@@ -293,8 +822,27 @@ public:
                     shapes.back().points[1].x = p2.x;
                     shapes.back().points[2].y = p2.y;
                     shapes.back().points[3] = p2;
-                
                 }
+                break;
+            case selection:
+                if (currentVertice == -1) return;
+
+                if (currentVertice == shapes[currentShape].points.size()){
+                    Coord middle = shapes[currentShape].getMidPoint();
+
+                    int dx = p2.x - middle.x;
+                    int dy = p2.y - middle.y;
+
+                    for (Coord &points : shapes[currentShape].points){
+                        points.x += dx;
+                        points.y += dy;
+                    }
+
+                    break;
+                }
+
+                // shapes[currentShape].points[currentVertice] = p2;
+                shapes[currentShape].modifyShape(currentVertice, p2, ctrl);
                 break;
             default:
                 shapes.back().points[1] = p2;
@@ -304,9 +852,13 @@ public:
     void update(float deltaTime) override {
         clear(colorFondo);
 
-        //if (drawTree) qTree.draw(this);
+        std::vector<Shape> copy(shapes);
 
-        for (auto shape : shapes){
+        std::sort(copy.begin(), copy.end(), [] (Shape &a, Shape &b) -> bool{
+            return a.zIndex < b.zIndex;
+        });
+
+        for (Shape &shape : copy){
             switch (shape.type){
                 case line:
                     drawLine(shape.points[0], shape.points[1], shape.edge);
@@ -318,17 +870,21 @@ public:
                 case rectangle:
                     drawRectangle(shape.points[0], shape.points[1], shape.points[2], shape.points[3], shape.edge, shape.inside, shape.filled);
                     break;
-                case elipse:
-                    drawElipse(shape.points[0], shape.points[1], shape.edge, shape.inside, shape.filled);
+                case ellipse:
+                    drawEllipse(shape.points[0], shape.points[3], shape.edge, shape.inside, shape.filled);
                     break;
                 case curve:
                     drawCurve(shape.points, shape.edge);
                     break;
                 case circle:
-                    drawCircle(shape.points[0], shape.points[1], shape.edge, shape.inside, shape.filled);
+                    drawCircle(shape.points[0], shape.points[3], shape.edge, shape.inside, shape.filled);
                     break;
             }
+
+            if (shape.selected) drawControlPoints(shape);
         }
+
+        if (drawTree) qTree.draw(this);
     }
     void drawUI() override {
         ImGui::Begin("Herramientas");
@@ -370,7 +926,7 @@ public:
 
         ImGui::Separator();
 
-        for (int i = 0; i < 5; ++i){
+        for (int i = 0; i < 6; ++i){
             if (i == mode){
                 ImGui::PushStyleColor(ImGuiCol_Button,        (ImVec4)ImColor::HSV(0.6f, 0.6f, 0.7f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(0.6f, 0.55f, 0.8f));
@@ -379,7 +935,10 @@ public:
                 if (ImGui::Button(items[i])) {
                     mode = static_cast<Figure>(i);
 
-                    incompleteFigure = false;
+                    incompleteShape = false;
+
+                    if (currentShape != -1) shapes[currentShape].selected = false;
+                    currentShape = -1;
                 }
 
                 ImGui::PopStyleColor(3);
@@ -387,16 +946,58 @@ public:
                 if (ImGui::Button(items[i])){
                     mode = static_cast<Figure>(i);
 
-                    incompleteFigure = false;
+                    incompleteShape = false;
+
+                    if (currentShape != -1) shapes[currentShape].selected = false;
+                    currentShape = -1;
                 }
             }
 
-            if (i != 4) ImGui::SameLine();
+            if (i < 5) ImGui::SameLine();
         }
 
         ImGui::Checkbox("Relleno", &fill);
 
+        if (currentShape != -1){
+            ImGui::Separator();
+            Shape &shape = shapes[currentShape];
+            float bordeFig[3] = {shape.edge.r, shape.edge.g, shape.edge.b};
+            float rellenoFig[3] = {shape.inside.r, shape.inside.g, shape.inside.b};
+
+            ImGui::Text("Figura seleccionada");
+
+            if (shape.type != curve && shape.type != line)
+                ImGui::Checkbox("Rellenar", &shape.filled);
+
+            if (shape.type == curve){
+                if (ImGui::Button("Aumentar grado")) shape.elevateDegree();
+            }
+
+            if (currentVertice != -1 && currentVertice != shape.points.size()){
+                ImGui::Text("Vertice seleccionado");
+                ImGui::InputInt("X", &shape.points[currentVertice].x);
+                ImGui::InputInt("Y", &shape.points[currentVertice].y);
+            }
+
+            ImGui::InputScalar("zIndex",ImGuiDataType_U32, &shape.zIndex);
+            ImGui::Text("Mayor zIndex: %u", zIndex-1);
+
+            if (ImGui::ColorEdit3("Borde", bordeFig)){
+                shape.edge.r = bordeFig[0];
+                shape.edge.g = bordeFig[1];
+                shape.edge.b = bordeFig[2];
+            }
+            if (shape.filled){
+                if (ImGui::ColorEdit3("Relleno", rellenoFig)){
+                    shape.inside.r = rellenoFig[0];
+                    shape.inside.g = rellenoFig[1];
+                    shape.inside.b = rellenoFig[2];
+                }
+            }
+        }
+
         ImGui::Separator();
+        
         if(ctrl) ImGui::Text("Ctrl");
         ImGui::End();
     }
@@ -421,7 +1022,7 @@ public:
             return;
         }
 
-        float m = float(a.y-b.y)/float(a.x-b.x);
+        float m = static_cast<float>(a.y-b.y)/(a.x-b.x);
 
         if (std::abs(m) > 1.0f){
             inverted = true;
@@ -523,6 +1124,8 @@ public:
         drawLine(a, c, edge);
     }
 
+    //c  d
+    //a  b
     void drawRectangle(Coord a, Coord b, Coord c, Coord d, Color edge, Color inside, bool filled){
         if (a.y == d.y || a.x == d.x){
             drawLine(a, d, edge);
@@ -540,7 +1143,7 @@ public:
         drawLine(c, a, edge);
     }
 
-    void drawElipse(Coord a, Coord b, Color edge, Color inside, bool filled){
+    void drawEllipse(Coord a, Coord b, Color edge, Color inside, bool filled){
         int x = 0, y, width, height;
         Coord center;
         bool inverted = false;
@@ -566,7 +1169,6 @@ public:
         center.y = (b.y+a.y)/2;
 
         if (inverted) std::swap(x, y);
-
         if (filled){
             drawLine({center.x - x, center.y - y}, {center.x - x, center.y + y}, inside);
             drawLine({center.x + x, center.y - y}, {center.x + x, center.y + y}, inside);
@@ -593,8 +1195,13 @@ public:
             if (inverted) std::swap(x, y);
 
             if (filled){
-                drawLine({center.x - x, center.y - y}, {center.x - x, center.y + y}, inside);
-                drawLine({center.x + x, center.y - y}, {center.x + x, center.y + y}, inside);
+                if (!inverted) {
+                    drawLine({center.x - x, center.y - y}, {center.x - x, center.y + y}, inside);
+                    drawLine({center.x + x, center.y - y}, {center.x + x, center.y + y}, inside);
+                } else {
+                    drawLine({center.x - x, center.y - y}, {center.x + x, center.y - y}, inside);
+                    drawLine({center.x - x, center.y + y}, {center.x + x, center.y + y}, inside);
+                }
             }
 
             putPixel(center.x + x, center.y + y, edge);
@@ -621,8 +1228,13 @@ public:
             if (inverted) std::swap(x, y);
 
             if (filled){
-                drawLine({center.x - x, center.y - y}, {center.x + x, center.y - y}, inside);
-                drawLine({center.x - x, center.y + y}, {center.x + x, center.y + y}, inside);
+                if (!inverted) {
+                    drawLine({center.x - x, center.y - y}, {center.x + x, center.y - y}, inside);
+                    drawLine({center.x - x, center.y + y}, {center.x + x, center.y + y}, inside);
+                } else {
+                    drawLine({center.x - x, center.y - y}, {center.x - x, center.y + y}, inside);
+                    drawLine({center.x + x, center.y - y}, {center.x + x, center.y + y}, inside);
+                }
             }
 
             putPixel(center.x + x, center.y + y, edge);
@@ -636,50 +1248,40 @@ public:
         }
     }
 
-    void drawCircle(Coord a, Coord b, Color edge, Color inside, bool filled){
-        int x = 0, y, d;
-        Coord center;
-
+    void drawCircle(Coord a, Coord b, Color edge, Color inside, bool filled) {
         if (a.x > b.x) std::swap(a, b);
 
-        y = (b.x-a.x)/2;
-        center.x = (b.x+a.x)/2;
-        center.y = (b.y+a.y)/2;
+        int radius = (b.x - a.x) / 2;
+        Coord center;
+        center.x = (b.x + a.x) / 2;
+        center.y = (b.y + a.y) / 2;
 
-        if (filled){
-            drawLine({center.x - x, center.y + y}, {center.x + x, center.y + y}, inside);
-            drawLine({center.x - x, center.y - y}, {center.x + x, center.y - y}, inside);
-            drawLine({center.x - y, center.y + x}, {center.x + y, center.y + x}, inside);
-            drawLine({center.x - y, center.y - x}, {center.x + y, center.y - x}, inside);
+        if (filled) {
+            int x = 0;
+            int y = radius;
+            int d = 1 - y;
+
+            while (x <= y) {
+                drawLine({center.x - x, center.y + y}, {center.x - x, center.y - y}, inside);
+                drawLine({center.x + x, center.y + y}, {center.x + x, center.y - y}, inside);
+                drawLine({center.x - y, center.y - x}, {center.x - y, center.y + x}, inside);
+                drawLine({center.x + y, center.y - x}, {center.x + y, center.y + x}, inside);
+
+                if (d >= 0) {
+                    d += 2 * (x - y) + 5;
+                    --y;
+                } else {
+                    d += 2 * x + 3;
+                }
+                ++x;
+            }
         }
 
-        putPixel(center.x + x, center.y + y, edge);
-        putPixel(center.x + x, center.y - y, edge);
-        putPixel(center.x - x, center.y - y, edge);
-        putPixel(center.x - x, center.y + y, edge);
-        putPixel(center.x + y, center.y + x, edge);
-        putPixel(center.x + y, center.y - x, edge);
-        putPixel(center.x - y, center.y - x, edge);
-        putPixel(center.x - y, center.y + x, edge);
+        int x = 0;
+        int y = radius;
+        int d = 1 - y;
 
-        d = 1 - y;
-        ++x;
-
-        while(x <= y){
-            if (d >= 0){
-                d += 2*(x - y)+ 5;
-                --y;
-            }else{
-                d += 2*x + 3;
-            }
-
-            if (filled){
-                drawLine({center.x - x, center.y + y}, {center.x + x, center.y + y}, inside);
-                drawLine({center.x - x, center.y - y}, {center.x + x, center.y - y}, inside);
-                drawLine({center.x - y, center.y + x}, {center.x + y, center.y + x}, inside);
-                drawLine({center.x - y, center.y - x}, {center.x + y, center.y - x}, inside);
-            }
-
+        while (x <= y) {
             putPixel(center.x + x, center.y + y, edge);
             putPixel(center.x + x, center.y - y, edge);
             putPixel(center.x - x, center.y - y, edge);
@@ -689,6 +1291,12 @@ public:
             putPixel(center.x - y, center.y - x, edge);
             putPixel(center.x - y, center.y + x, edge);
 
+            if (d >= 0) {
+                d += 2 * (x - y) + 5;
+                --y;
+            } else {
+                d += 2 * x + 3;
+            }
             ++x;
         }
     }
@@ -744,7 +1352,7 @@ public:
             return;
         }
 
-        float m = float(a.y-b.y)/float(a.x-b.x);
+        float m = static_cast<float>(a.y-b.y)/(a.x-b.x);
 
         if (std::abs(m) > 1.0f){
             inverted = true;
@@ -793,25 +1401,37 @@ public:
 
     void saveState(std::string fileName){
         std::ofstream file(fileName);
-        
-        if (file.is_open()){
-            for(auto shape: shapes)
-                file<<shape.to_string()<<std::endl;
 
-            file.close();
+        if (!file.is_open()){
+            std::cout<<"Error guardando a "<<fileName<<std::endl;
+            return;
         }
+
+        for(Shape &shape: shapes)
+            file<<shape.to_string()<<std::endl;
+
+        file.close();
+
+        statesBehind = 0; //Si guardas un nuevo estado estás al día
+
+        std::cout<<"Guardado a "<<fileName<<std::endl;
     }
 
-    void loadState(std::string fileName){
+    bool loadState(std::string fileName){
         std::ifstream file(fileName);
         Shape temp;
         int in;
 
-        if (!file.is_open()) return;
+        if (!file.is_open()){
+            std::cout<<"Error cargando de "<<fileName<<std::endl;
+            return false;
+        }
 
         shapes.clear();
-        incompleteFigure = false;
+        qTree.clear();
+        incompleteShape = false;
         dibujando = false;
+        currentShape = -1;
 
         std::string line;
 
@@ -832,43 +1452,44 @@ public:
 
             shapes.push_back(temp);
             temp.points.clear();
+            qTree.add(shapes);
         }
 
         file.close();
+
+        std::cout<<"Cargado de "<<fileName<<std::endl;
+
+        return true;
+    }
+
+    void drawControlPoints(Shape &shape){
+        if (shape.type == curve){
+            for (int i = 0; i < shape.points.size() - 1; ++i)
+                drawLine(shape.points[i], shape.points[i+1], {1.0f, 1.0f, 1.0f});
+        }
+        for (Coord point : shape.points){
+            drawCircle({point.x-3, point.y-3}, {point.x+3, point.y+3}, {0.0f,0.0f,0.0f}, {0.97f, 0.88f, 0.39f}, true);
+        }
+
+        Coord midPoint = shape.getMidPoint();
+
+        drawCircle({midPoint.x-3, midPoint.y-3}, {midPoint.x+3, midPoint.y+3}, {0.0f,0.0f,0.0f}, {0.45f, 0.45f, 0.45f}, true);
     }
 };
 
+void quadTree::draw(proyecto1* p1, quadNode &n){
+    p1->drawRectangle(n.topLeft, {n.bottomRight.x-1, n.topLeft.y}, {n.topLeft.x, n.bottomRight.y-1}, {n.bottomRight.x-1, n.bottomRight.y-1},
+                      {255, 255, 255}, {0,0,0}, false);
 
-/*
-std::string to_string(){
-        std::ostringstream oss;
-        
-        oss<<type<<' ';
-        oss<<edge.r<<' '<<edge.g<<' '<<edge.b<<' ';
-        oss<<inside.r<<' '<<inside.g<<' '<<inside.b<<' ';
-        oss<<filled;
+    if (n.isLeaf()) return;
 
-        for (auto point : points) 
-            oss<<' '<<point.x<<' '<<point.y;
-        
-        return oss.str();
-    }
-*/
-
-// void quadTree::draw(proyecto1* p1, Node* n){
-//     p1->drawRectangle({n->x0, n->y1-1}, {n->x1-1, n->y0}, {255, 255, 255});
-
-//     if (n->children[0] == nullptr) return;
-
-//     for (int i = 0; i < 4; ++i) draw(p1, n->children[i]);
-// }
-
-// void quadTree::draw(proyecto1* p1){
-//     draw(p1, root);
-// }
+    for (int i = 0; i < 4; ++i) draw(p1, n.children[i]);
+}
 
 int main() {
     proyecto1 app;
     app.run();
+
+    for (int i = 0; i < 5; ++i) std::remove((".state" + std::to_string(i)).c_str());
     return 0;
 }
