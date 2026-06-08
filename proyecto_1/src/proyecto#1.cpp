@@ -133,6 +133,18 @@ public:
         }
     }
 
+    void moveShape(Coord p){
+        Coord middle = getMidPoint();
+
+        int dx = p.x - middle.x;
+        int dy = p.y - middle.y;
+
+        for (Coord &points : this->points){
+            points.x += dx;
+            points.y += dy;
+        }
+    }
+
     void elevateDegree() {
         if (points.empty() || type != curve) {
             return;
@@ -572,6 +584,12 @@ public:
     void draw(proyecto1 *p1){
         draw(p1, root);
     }
+
+    void remake(std::vector<Shape> &shapes){
+        clear();
+
+        for (int i = 0; i < shapes.size(); ++i) add(shapes, i);
+    }
 };
 
 class proyecto1 : public Engine2D {
@@ -596,9 +614,12 @@ private:
     
     bool fill = false;
 
-    unsigned zIndex = 0;
+    unsigned zIndex = 1;
 
     ImGuiIO& io = ImGui::GetIO();
+
+    //Para copiar, cortar y pegar
+    Shape clipboard;
 
     //Para ctrl+z y ctrl+y
     int savedStates = 1;
@@ -638,9 +659,14 @@ public:
         if (key == GLFW_KEY_DELETE && currentShape != -1){
             shapes.erase(shapes.begin() + currentShape);
 
-            qTree.clear();
+            qTree.remake(shapes);
 
-            for (int i = 0; i < shapes.size(); ++i) qTree.add(shapes, i);
+            savedStates += savedStates < 5 ? 1 : 0;
+
+            saveState(".state" + std::to_string(currentState));
+
+            currentState = (currentState + 1) % 5;
+            return;
         }
 
         if (key > GLFW_KEY_0 && key < GLFW_KEY_7){
@@ -651,6 +677,7 @@ public:
             
             if (currentShape != -1) shapes[currentShape].selected = false;
             currentShape = -1;
+            currentVertice = -1;
             return;
         }
 
@@ -685,6 +712,94 @@ public:
 
                 ++savedStates;
             }
+            else if (key == GLFW_KEY_C && currentShape != -1){
+                std::cout<<"ctrl+c"<<std::endl;
+                clipboard = shapes[currentShape];
+                clipboard.selected = false;
+            }else if (key == GLFW_KEY_X && currentShape != -1){
+                std::cout<<"ctrl+x"<<std::endl;
+                clipboard = shapes[currentShape];
+                clipboard.selected = false;
+
+                shapes.erase(shapes.begin() + currentShape);
+
+                qTree.remake(shapes);
+
+                savedStates += savedStates < 5 ? 1 : 0;
+
+                saveState(".state" + std::to_string(currentState));
+
+                currentState = (currentState + 1) % 5;
+            }else if (key == GLFW_KEY_V && clipboard.points.size() != 0){
+                std::cout<<"ctrl+v"<<std::endl;
+
+                ImVec2 mouse = ImGui::GetMousePos();
+
+                clipboard.moveShape({static_cast<int>(mouse.x), static_cast<int>(mouse.y)});
+
+                clipboard.zIndex = zIndex++;
+
+                shapes.push_back(clipboard);
+
+                qTree.add(shapes);
+
+                savedStates += savedStates < 5 ? 1 : 0;
+
+                saveState(".state" + std::to_string(currentState));
+
+                currentState = (currentState + 1) % 5;
+            }
+        }
+
+        if (currentShape != -1){
+            if (key == GLFW_KEY_W){
+                for (Coord &point : shapes[currentShape].points)
+                    point.y -= 5;
+                
+                qTree.remake(shapes);
+
+                savedStates += savedStates < 5 ? 1 : 0;
+
+                saveState(".state" + std::to_string(currentState));
+
+                currentState = (currentState + 1) % 5;
+            }
+            else if (key == GLFW_KEY_A){
+                for (Coord &point : shapes[currentShape].points)
+                    point.x -= 5;
+
+                qTree.remake(shapes);
+
+                savedStates += savedStates < 5 ? 1 : 0;
+
+                saveState(".state" + std::to_string(currentState));
+
+                currentState = (currentState + 1) % 5;
+            }
+            else if (key == GLFW_KEY_S){
+                for (Coord &point : shapes[currentShape].points)
+                    point.y += 5;
+
+                qTree.remake(shapes);
+
+                savedStates += savedStates < 5 ? 1 : 0;
+
+                saveState(".state" + std::to_string(currentState));
+
+                currentState = (currentState + 1) % 5;
+            }
+            else if (key == GLFW_KEY_D){
+                for (Coord &point : shapes[currentShape].points)
+                    point.x += 5;
+
+                qTree.remake(shapes);
+
+                savedStates += savedStates < 5 ? 1 : 0;
+
+                saveState(".state" + std::to_string(currentState));
+
+                currentState = (currentState + 1) % 5;
+            }
         }
     }
     void onkeyUp(int key) override {
@@ -716,7 +831,6 @@ public:
                 if (incompleteShape){
                     shapes.back().points[2] = p1;
                     incompleteShape = false;
-                    dibujando = false;
                 }else{
                     shapes.push_back({{p1, p1, p1}, triangle, colorBorde, colorRelleno, fill, zIndex});
                     incompleteShape = true;
@@ -740,10 +854,9 @@ public:
                 if (incompleteShape){
                     shapes.back().points.push_back(p1);
                 }else{
-                    shapes.push_back({{p1}, curve, colorBorde, colorRelleno, false, zIndex});
+                    shapes.push_back({{p1, p1}, curve, colorBorde, colorRelleno, false, zIndex});
                     incompleteShape = true;
                 }
-                dibujando = false;
                 break;
             case selection:{
                 if (currentShape != -1){
@@ -783,19 +896,19 @@ public:
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             dibujando = false;
 
+            if (shapes.size() == 0) return;
+
             if (incompleteShape) return;
+            if (mode == selection && currentVertice == -1) return;
 
             savedStates += savedStates < 5 ? 1 : 0;
 
             saveState(".state" + std::to_string(currentState));
 
             currentState = (currentState + 1) % 5;
-
-            if (shapes.size() == 0) return;
+            
             if (mode == selection){
-                qTree.clear();
-
-                for (int i = 0; i < shapes.size(); ++i) qTree.add(shapes, i);
+                qTree.remake(shapes);
 
                 return;
             }
@@ -828,21 +941,20 @@ public:
                 if (currentVertice == -1) return;
 
                 if (currentVertice == shapes[currentShape].points.size()){
-                    Coord middle = shapes[currentShape].getMidPoint();
-
-                    int dx = p2.x - middle.x;
-                    int dy = p2.y - middle.y;
-
-                    for (Coord &points : shapes[currentShape].points){
-                        points.x += dx;
-                        points.y += dy;
-                    }
+                    shapes[currentShape].moveShape(p2);
 
                     break;
                 }
 
-                // shapes[currentShape].points[currentVertice] = p2;
                 shapes[currentShape].modifyShape(currentVertice, p2, ctrl);
+                break;
+            case triangle:{
+                int i = incompleteShape ? 1 : 2;
+                shapes.back().points[i] = p2;
+                break;
+                }
+            case curve:
+                shapes.back().points.back() = p2;
                 break;
             default:
                 shapes.back().points[1] = p2;
@@ -939,6 +1051,7 @@ public:
 
                     if (currentShape != -1) shapes[currentShape].selected = false;
                     currentShape = -1;
+                    currentVertice = -1;
                 }
 
                 ImGui::PopStyleColor(3);
@@ -950,6 +1063,7 @@ public:
 
                     if (currentShape != -1) shapes[currentShape].selected = false;
                     currentShape = -1;
+                    currentVertice = -1;
                 }
             }
 
@@ -974,9 +1088,12 @@ public:
             }
 
             if (currentVertice != -1 && currentVertice != shape.points.size()){
+                Coord vertice = shape.points[currentVertice];
                 ImGui::Text("Vertice seleccionado");
-                ImGui::InputInt("X", &shape.points[currentVertice].x);
-                ImGui::InputInt("Y", &shape.points[currentVertice].y);
+                ImGui::InputInt("X", &vertice.x);
+                ImGui::InputInt("Y", &vertice.y);
+
+                shape.modifyShape(currentVertice, vertice, ctrl);
             }
 
             ImGui::InputScalar("zIndex",ImGuiDataType_U32, &shape.zIndex);
@@ -1432,6 +1549,7 @@ public:
         incompleteShape = false;
         dibujando = false;
         currentShape = -1;
+        currentVertice = -1;
 
         std::string line;
 
