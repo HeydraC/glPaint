@@ -463,6 +463,8 @@ private:
     void add(int i, std::vector<Shape> &shapes, quadNode &n, int depth){
         if (n.isLeaf()){
             n.shapes.push_back(i);
+
+            std::cout<<i<<std::endl;
             
             if (n.shapes.size() >= maxShapes && depth + 1 < maxDepth)
                 split(n, shapes, depth);
@@ -577,6 +579,10 @@ public:
         add(i, shapes, root, 0);
     }
 
+    void addLast(std::vector<Shape> &shapes){
+        add(shapes.size() - 1, shapes, root, 0);
+    }
+
     int getIndex(Coord mouse, std::vector<Shape> &shapes){
         return getIndex(mouse, shapes, root);
     }
@@ -673,6 +679,7 @@ public:
             mode = static_cast<Figure>(key - 49);
             if (incompleteShape){
                 incompleteShape = false;  
+                qTree.addLast(shapes);
             }
             
             if (currentShape != -1) shapes[currentShape].selected = false;
@@ -741,7 +748,7 @@ public:
 
                 shapes.push_back(clipboard);
 
-                qTree.add(shapes);
+                qTree.addLast(shapes);
 
                 savedStates += savedStates < 5 ? 1 : 0;
 
@@ -814,7 +821,7 @@ public:
         }else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
             if (mode == curve && incompleteShape) {
                 incompleteShape = false;
-                qTree.add(shapes);
+                qTree.addLast(shapes);
                 savedStates += savedStates < 5 ? 1 : 0;
 
                 saveState(".state" + std::to_string(currentState));
@@ -913,7 +920,7 @@ public:
                 return;
             }
 
-            qTree.add(shapes);
+            qTree.addLast(shapes);
         }      
     }
     // Evento de movimiento continuo
@@ -1047,7 +1054,10 @@ public:
                 if (ImGui::Button(items[i])) {
                     mode = static_cast<Figure>(i);
 
-                    incompleteShape = false;
+                    if (incompleteShape){
+                        qTree.addLast(shapes);
+                        incompleteShape = false;
+                    }
 
                     if (currentShape != -1) shapes[currentShape].selected = false;
                     currentShape = -1;
@@ -1059,7 +1069,10 @@ public:
                 if (ImGui::Button(items[i])){
                     mode = static_cast<Figure>(i);
 
-                    incompleteShape = false;
+                    if (incompleteShape){
+                        qTree.addLast(shapes);
+                        incompleteShape = false;
+                    }
 
                     if (currentShape != -1) shapes[currentShape].selected = false;
                     currentShape = -1;
@@ -1085,6 +1098,8 @@ public:
 
             if (shape.type == curve){
                 if (ImGui::Button("Aumentar grado")) shape.elevateDegree();
+                ImGui::SameLine();
+                ImGui::Text("Grado actual: %d", shape.points.size());
             }
 
             if (currentVertice != -1 && currentVertice != shape.points.size()){
@@ -1570,7 +1585,7 @@ public:
 
             shapes.push_back(temp);
             temp.points.clear();
-            qTree.add(shapes);
+            qTree.addLast(shapes);
         }
 
         file.close();
