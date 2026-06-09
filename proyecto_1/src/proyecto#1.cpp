@@ -20,6 +20,10 @@ struct Coord{
 };
 
 class Shape{
+private:
+    Coord lerp(Coord a, Coord b, float t) {
+        return { static_cast<int>(a.x + (b.x - a.x) * t), static_cast<int>(a.y + (b.y - a.y) * t)};
+    }
 public:
     std::vector<Coord> points;
     Figure type;
@@ -76,7 +80,7 @@ public:
         return -1;
     }
 
-    void modifyShape(int vertice, Coord p, bool ctrl){
+    void modify(int vertice, Coord p, bool ctrl){
         points[vertice] = p;
         
         switch(type){
@@ -133,7 +137,7 @@ public:
         }
     }
 
-    void moveShape(Coord p){
+    void move(Coord p){
         Coord middle = getMidPoint();
 
         int dx = p.x - middle.x;
@@ -162,12 +166,34 @@ public:
             double newX = ratio * points[i - 1].x + (1.0 - ratio) * points[i].x;
             double newY = ratio * points[i - 1].y + (1.0 - ratio) * points[i].y;
 
-            // Round to nearest int to preserve the curve's shape as best as possible
-            Q[i].x = static_cast<int>(std::round(newX));
-            Q[i].y = static_cast<int>(std::round(newY));
+            Q[i].x = static_cast<int>(newX);
+            Q[i].y = static_cast<int>(newY);
         }
 
         points = Q;
+    }
+
+    void split(Shape &left, Shape &right, float t = 0.5f) {
+        if (type != curve) return;
+
+        int n = points.size();
+        if (n == 0) return;
+
+        left.points.resize(n);
+        right.points.resize(n);
+
+        std::vector<Coord> temp = points;
+
+        left.points[0] = temp[0];
+        right.points[n - 1] = temp[n - 1];
+
+        for (int i = 1; i < n; ++i) {
+            for (int j = 0; j < n - i; ++j) {
+                temp[j] = lerp(temp[j], temp[j + 1], t);
+            }
+            left.points[i] = temp[0];
+            right.points[n - 1 - i] = temp[n - 1 - i];
+        }
     }
 };
 
@@ -346,43 +372,18 @@ private:
         return true;
     }
 
-    Coord lerp(Coord a, Coord b, float t) {
-        return { static_cast<int>(a.x + (b.x - a.x) * t), static_cast<int>(a.y + (b.y - a.y) * t)};
-    }
-
-    void splitBezierN(const std::vector<Coord>& curve, std::vector<Coord>& left, std::vector<Coord>& right) {
-        size_t n = curve.size();
-        if (n == 0) return;
-
-        left.resize(n);
-        right.resize(n);
-
-        std::vector<Coord> temp = curve;
-
-        left[0] = temp[0];
-        right[n - 1] = temp[n - 1];
-
-        for (size_t i = 1; i < n; ++i) {
-            for (size_t j = 0; j < n - i; ++j) {
-                temp[j] = lerp(temp[j], temp[j + 1], 0.5f);
-            }
-            left[i] = temp[0];
-            right[n - 1 - i] = temp[n - 1 - i];
-        }
-    }
-
-    bool curveInZone(const std::vector<Coord>& curve, Coord topLeft, Coord bottomRight, int depth = 0) {
-        if (curve.empty()) return false;
+    bool curveInZone(Shape &curve, Coord topLeft, Coord bottomRight, int depth = 0) {
+        if (curve.points.empty()) return false;
 
         // A. Calculate the AABB of all n control points
-        int minX = curve[0].x, maxX = curve[0].x;
-        int minY = curve[0].y, maxY = curve[0].y;
+        int minX = curve.points[0].x, maxX = curve.points[0].x;
+        int minY = curve.points[0].y, maxY = curve.points[0].y;
         
-        for (size_t i = 1; i < curve.size(); ++i) {
-            minX = std::min(minX, curve[i].x);
-            maxX = std::max(maxX, curve[i].x);
-            minY = std::min(minY, curve[i].y);
-            maxY = std::max(maxY, curve[i].y);
+        for (size_t i = 1; i < curve.points.size(); ++i) {
+            minX = std::min(minX, curve.points[i].x);
+            maxX = std::max(maxX, curve.points[i].x);
+            minY = std::min(minY, curve.points[i].y);
+            maxY = std::max(maxY, curve.points[i].y);
         }
 
         if (minX > bottomRight.x || maxX < topLeft.x || minY > bottomRight.y || maxY < topLeft.y) {
@@ -393,14 +394,13 @@ private:
         if (depth >= MAX_DEPTH) {
             return true; 
         }
+        Shape leftCurve;
+        Shape rightCurve;
 
-        std::vector<Coord> leftCurve;
-        std::vector<Coord> rightCurve;
+        leftCurve.type = Figure::curve;
+        rightCurve.type = Figure::curve;
 
-        leftCurve.reserve(curve.size());
-        rightCurve.reserve(curve.size());
-
-        splitBezierN(curve, leftCurve, rightCurve);
+        curve.split(leftCurve, rightCurve);
 
         return curveInZone(leftCurve, topLeft, bottomRight, depth + 1)
             || curveInZone(rightCurve, topLeft, bottomRight, depth + 1);
@@ -449,7 +449,7 @@ private:
 
                 return filledEllipseInZone(shape.points[0], shape.points[3], n.topLeft, n.bottomRight);
             case curve:
-                return curveInZone(shape.points, n.topLeft, n.bottomRight);
+                return curveInZone(shape, n.topLeft, n.bottomRight);
         }
 
         return true;
@@ -460,15 +460,27 @@ private:
             && mouse.x <= n.bottomRight.x && mouse.y <= n.bottomRight.y;
     }
 
+    void sortByzIndex(quadNode &n, std::vector<Shape> &shapes){
+        std::vector<std::pair<int, unsigned>> map;
+
+        for (int i : n.shapes) map.push_back({i, shapes[i].zIndex});
+
+        std::sort(map.begin(), map.end(), [](std::pair<int, unsigned> a, std::pair<int, unsigned> b)->bool{
+            return a.second > b.second;
+        });
+
+        for (int i = 0; i < n.shapes.size(); ++i)
+            n.shapes[i] = map[i].first;
+    }
+
     void add(int i, std::vector<Shape> &shapes, quadNode &n, int depth){
         if (n.isLeaf()){
             n.shapes.push_back(i);
 
-            std::cout<<i<<std::endl;
+            sortByzIndex(n, shapes);
             
             if (n.shapes.size() >= maxShapes && depth + 1 < maxDepth)
                 split(n, shapes, depth);
-                
             return;
         }
         
@@ -478,13 +490,11 @@ private:
         }  
     }
 
-    int getIndexInNode(Coord mouse, std::vector<Shape> &shapes, quadNode &n){
+    int getIndexInNode(Coord mouse, std::vector<Shape> shapes, quadNode &n){
         Coord topLeft = {mouse.x - 2, mouse.y - 2};
         Coord bottomRight = {mouse.x + 2, mouse.y + 2};
 
-        for (int i = 0; i < n.shapes.size(); ++i){
-            int j = n.shapes[i];
-
+        for (int j : n.shapes){
             switch (shapes[j].type){
                 case line:
                     if (lineInZone(shapes[j].points[0], shapes[j].points[1], topLeft, bottomRight)) return j;
@@ -522,7 +532,7 @@ private:
 
                     break;
                 case curve:
-                    if (curveInZone(shapes[j].points, topLeft, bottomRight)) return j;
+                    if (curveInZone(shapes[j], topLeft, bottomRight)) return j;
 
                     break;
                 }
@@ -575,12 +585,8 @@ public:
         delQuadNode(root);
     }
 
-    void add(std::vector<Shape> &shapes, int i = 0){
+    void add(std::vector<Shape> &shapes, int i){
         add(i, shapes, root, 0);
-    }
-
-    void addLast(std::vector<Shape> &shapes){
-        add(shapes.size() - 1, shapes, root, 0);
     }
 
     int getIndex(Coord mouse, std::vector<Shape> &shapes){
@@ -604,7 +610,7 @@ private:
     Color colorBorde = Color(1.0f, 0.0f, 0.0f);
     bool dibujando = false;
 
-    //Mío
+
     Figure mode = line;
     Coord p1, p2;
     std::vector<Shape> shapes;
@@ -622,6 +628,8 @@ private:
 
     unsigned zIndex = 1;
 
+    int maxStates = 10;
+
     ImGuiIO& io = ImGui::GetIO();
 
     //Para copiar, cortar y pegar
@@ -632,7 +640,7 @@ private:
     int currentState = 1;
     int statesBehind = 0;
 
-    const char* items[6] = {"Linea", "Triangulo", "Rectangulo", "Elipse", "Curva", "Seleccion"};
+    const char* items[6] = {"Línea", "Triángulo", "Rectángulo", "Elipse", "Curva", "Selección"};
 public:
     //Originalmente 1024x600
     proyecto1(): Engine2D(1280, 720, "Proyecto #1 - Gestion y Despliegue de Primitivas") {
@@ -656,31 +664,30 @@ public:
             currentShape = -1;
 
             saveState(".state" + std::to_string(currentState));
-            currentState = (currentState + 1) % 5;
+            currentState = (currentState + 1) % maxStates;
         }
         if (key == GLFW_KEY_LEFT_CONTROL) ctrl = true;
         if (key == GLFW_KEY_Q) drawTree = !drawTree;
         if (key == GLFW_KEY_R) fill = !fill;
 
-        if (key == GLFW_KEY_DELETE && currentShape != -1){
+        if ((key == GLFW_KEY_DELETE || key == GLFW_KEY_BACKSPACE) && currentShape != -1){
             shapes.erase(shapes.begin() + currentShape);
 
-            qTree.remake(shapes);
+            currentShape = -1;
+            currentVertice = -1;
 
-            savedStates += savedStates < 5 ? 1 : 0;
+            savedStates += savedStates < maxStates ? 1 : 0;
 
             saveState(".state" + std::to_string(currentState));
 
-            currentState = (currentState + 1) % 5;
+            currentState = (currentState + 1) % maxStates;
             return;
         }
 
         if (key > GLFW_KEY_0 && key < GLFW_KEY_7){
             mode = static_cast<Figure>(key - 49);
-            if (incompleteShape){
-                incompleteShape = false;  
-                qTree.addLast(shapes);
-            }
+            
+            incompleteShape = false;
             
             if (currentShape != -1) shapes[currentShape].selected = false;
             currentShape = -1;
@@ -694,14 +701,14 @@ public:
                 if (savedStates <= 1) return;
 
                 currentState -= 2;
-                if (currentState < 0) currentState = 5 + currentState;
+                if (currentState < 0) currentState = maxStates + currentState;
 
                 if (!loadState(".state" + std::to_string(currentState))){
-                    currentState = (currentState + 2) % 5;
+                    currentState = (currentState + 2) % maxStates;
                     return;
                 }
                 
-                currentState = (currentState + 1) % 5;
+                currentState = (currentState + 1) % maxStates;
                 --savedStates;
                 ++statesBehind;
             }else if (key == GLFW_KEY_Y){
@@ -710,12 +717,11 @@ public:
 
                 --statesBehind;
 
-                if (!loadState(".state" + std::to_string(currentState))){
+                if (!loadState(".state" + std::to_string(currentState)))
                     ++statesBehind;
-                    if (currentState < 0) currentState = 4;
-                }
+                
 
-                currentState = (currentState + 1) % 5;
+                currentState = (currentState + 1) % maxStates;
 
                 ++savedStates;
             }
@@ -730,31 +736,27 @@ public:
 
                 shapes.erase(shapes.begin() + currentShape);
 
-                qTree.remake(shapes);
-
-                savedStates += savedStates < 5 ? 1 : 0;
+                savedStates += savedStates < maxStates ? 1 : 0;
 
                 saveState(".state" + std::to_string(currentState));
 
-                currentState = (currentState + 1) % 5;
+                currentState = (currentState + 1) % maxStates;
             }else if (key == GLFW_KEY_V && clipboard.points.size() != 0){
                 std::cout<<"ctrl+v"<<std::endl;
 
                 ImVec2 mouse = ImGui::GetMousePos();
 
-                clipboard.moveShape({static_cast<int>(mouse.x), static_cast<int>(mouse.y)});
+                clipboard.move({static_cast<int>(mouse.x), static_cast<int>(mouse.y)});
 
                 clipboard.zIndex = zIndex++;
 
                 shapes.push_back(clipboard);
 
-                qTree.addLast(shapes);
-
-                savedStates += savedStates < 5 ? 1 : 0;
+                savedStates += savedStates < maxStates ? 1 : 0;
 
                 saveState(".state" + std::to_string(currentState));
 
-                currentState = (currentState + 1) % 5;
+                currentState = (currentState + 1) % maxStates;
             }
         }
 
@@ -762,50 +764,42 @@ public:
             if (key == GLFW_KEY_W){
                 for (Coord &point : shapes[currentShape].points)
                     point.y -= 5;
-                
-                qTree.remake(shapes);
 
-                savedStates += savedStates < 5 ? 1 : 0;
+                savedStates += savedStates < maxStates ? 1 : 0;
 
                 saveState(".state" + std::to_string(currentState));
 
-                currentState = (currentState + 1) % 5;
+                currentState = (currentState + 1) % maxStates;
             }
             else if (key == GLFW_KEY_A){
                 for (Coord &point : shapes[currentShape].points)
                     point.x -= 5;
 
-                qTree.remake(shapes);
-
-                savedStates += savedStates < 5 ? 1 : 0;
+                savedStates += savedStates < maxStates ? 1 : 0;
 
                 saveState(".state" + std::to_string(currentState));
 
-                currentState = (currentState + 1) % 5;
+                currentState = (currentState + 1) % maxStates;
             }
             else if (key == GLFW_KEY_S){
                 for (Coord &point : shapes[currentShape].points)
                     point.y += 5;
 
-                qTree.remake(shapes);
-
-                savedStates += savedStates < 5 ? 1 : 0;
+                savedStates += savedStates < maxStates ? 1 : 0;
 
                 saveState(".state" + std::to_string(currentState));
 
-                currentState = (currentState + 1) % 5;
+                currentState = (currentState + 1) % maxStates;
             }
             else if (key == GLFW_KEY_D){
                 for (Coord &point : shapes[currentShape].points)
                     point.x += 5;
 
-                qTree.remake(shapes);
-
-                savedStates += savedStates < 5 ? 1 : 0;
+                savedStates += savedStates < maxStates ? 1 : 0;
 
                 saveState(".state" + std::to_string(currentState));
 
-                currentState = (currentState + 1) % 5;
+                currentState = (currentState + 1) % maxStates;
             }
         }
     }
@@ -819,15 +813,7 @@ public:
             if (!io.WantCaptureMouse) dibujando = true;
             else return;
         }else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-            if (mode == curve && incompleteShape) {
-                incompleteShape = false;
-                qTree.addLast(shapes);
-                savedStates += savedStates < 5 ? 1 : 0;
-
-                saveState(".state" + std::to_string(currentState));
-                
-                currentState = (currentState + 1) % 5;
-            }
+            incompleteShape = false;
             return;
         }else return;
         
@@ -835,12 +821,12 @@ public:
         p1 = {static_cast<int>(x), static_cast<int>(y)};
         switch (mode){
             case triangle:
-                if (incompleteShape){
-                    shapes.back().points[2] = p1;
-                    incompleteShape = false;
-                }else{
+                if (!incompleteShape || shapes.back().type != triangle){
                     shapes.push_back({{p1, p1, p1}, triangle, colorBorde, colorRelleno, fill, zIndex});
                     incompleteShape = true;
+                }else{
+                    shapes.back().points[2] = p1;
+                    incompleteShape = false;
                 }
                 break;
             case rectangle:
@@ -858,11 +844,11 @@ public:
                 shapes.push_back({{p1, p1, p1, p1}, mode, colorBorde, colorRelleno, fill, zIndex});
                 break;
             case curve:
-                if (incompleteShape){
-                    shapes.back().points.push_back(p1);
-                }else{
+                if (!incompleteShape || shapes.back().type != curve){
                     shapes.push_back({{p1, p1}, curve, colorBorde, colorRelleno, false, zIndex});
                     incompleteShape = true;
+                }else{
+                    shapes.back().points.push_back(p1);
                 }
                 break;
             case selection:{
@@ -892,6 +878,7 @@ public:
             }
             case line:
                 shapes.push_back({{p1, p1}, mode, colorBorde, colorRelleno, false, zIndex});
+                break;
             default:
                 shapes.push_back({{p1, p1}, mode, colorBorde, colorRelleno, fill, zIndex});
                 break;
@@ -905,22 +892,13 @@ public:
 
             if (shapes.size() == 0) return;
 
-            if (incompleteShape) return;
             if (mode == selection && currentVertice == -1) return;
 
-            savedStates += savedStates < 5 ? 1 : 0;
+            savedStates += savedStates < maxStates ? 1 : 0;
 
             saveState(".state" + std::to_string(currentState));
 
-            currentState = (currentState + 1) % 5;
-            
-            if (mode == selection){
-                qTree.remake(shapes);
-
-                return;
-            }
-
-            qTree.addLast(shapes);
+            currentState = (currentState + 1) % maxStates;
         }      
     }
     // Evento de movimiento continuo
@@ -948,12 +926,12 @@ public:
                 if (currentVertice == -1) return;
 
                 if (currentVertice == shapes[currentShape].points.size()){
-                    shapes[currentShape].moveShape(p2);
+                    shapes[currentShape].move(p2);
 
                     break;
                 }
 
-                shapes[currentShape].modifyShape(currentVertice, p2, ctrl);
+                shapes[currentShape].modify(currentVertice, p2, ctrl);
                 break;
             case triangle:{
                 int i = incompleteShape ? 1 : 2;
@@ -972,6 +950,8 @@ public:
         clear(colorFondo);
 
         std::vector<Shape> copy(shapes);
+
+        qTree.remake(shapes);
 
         std::sort(copy.begin(), copy.end(), [] (Shape &a, Shape &b) -> bool{
             return a.zIndex < b.zIndex;
@@ -1006,13 +986,11 @@ public:
         if (drawTree) qTree.draw(this);
     }
     void drawUI() override {
-        ImGui::Begin("Herramientas");
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+        ImVec2 windowSize = ImVec2(415.0f, 485.0f);
+        ImGui::SetNextWindowSize(windowSize, ImGuiCond_Always);
+        ImGui::Begin("Herramientas", NULL, flags);
         ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-
-        ImVec2 mousePos = ImGui::GetMousePos();
-
-        // Display the coordinates
-        ImGui::Text("Mouse Position: (%.1f, %.1f)", mousePos.x, mousePos.y);
 
         ImGui::Separator();
 
@@ -1054,10 +1032,7 @@ public:
                 if (ImGui::Button(items[i])) {
                     mode = static_cast<Figure>(i);
 
-                    if (incompleteShape){
-                        qTree.addLast(shapes);
-                        incompleteShape = false;
-                    }
+                    incompleteShape = false;
 
                     if (currentShape != -1) shapes[currentShape].selected = false;
                     currentShape = -1;
@@ -1069,10 +1044,7 @@ public:
                 if (ImGui::Button(items[i])){
                     mode = static_cast<Figure>(i);
 
-                    if (incompleteShape){
-                        qTree.addLast(shapes);
-                        incompleteShape = false;
-                    }
+                    incompleteShape = false;
 
                     if (currentShape != -1) shapes[currentShape].selected = false;
                     currentShape = -1;
@@ -1091,16 +1063,10 @@ public:
             float bordeFig[3] = {shape.edge.r, shape.edge.g, shape.edge.b};
             float rellenoFig[3] = {shape.inside.r, shape.inside.g, shape.inside.b};
 
-            ImGui::Text("Figura seleccionada");
+            ImGui::Text("Opciones de figura:");
 
             if (shape.type != curve && shape.type != line)
                 ImGui::Checkbox("Rellenar", &shape.filled);
-
-            if (shape.type == curve){
-                if (ImGui::Button("Aumentar grado")) shape.elevateDegree();
-                ImGui::SameLine();
-                ImGui::Text("Grado actual: %d", shape.points.size());
-            }
 
             if (currentVertice != -1 && currentVertice != shape.points.size()){
                 Coord vertice = shape.points[currentVertice];
@@ -1108,10 +1074,12 @@ public:
                 ImGui::InputInt("X", &vertice.x);
                 ImGui::InputInt("Y", &vertice.y);
 
-                shape.modifyShape(currentVertice, vertice, ctrl);
+                shape.modify(currentVertice, vertice, ctrl);
             }
 
-            ImGui::InputScalar("zIndex",ImGuiDataType_U32, &shape.zIndex);
+            ImGui::Text("zIndex:");
+            ImGui::SameLine();
+            ImGui::InputScalar("##zIndex",ImGuiDataType_U32, &shape.zIndex);
             ImGui::Text("Mayor zIndex: %u", zIndex-1);
 
             if (ImGui::ColorEdit3("Borde", bordeFig)){
@@ -1126,6 +1094,50 @@ public:
                     shape.inside.b = rellenoFig[2];
                 }
             }
+
+            static float scale = 1.0f;
+
+            ImGui::Text("Escala:");
+            ImGui::SameLine();
+            ImGui::SliderFloat("##Escala", &scale, 0.1f, 3.0f);
+            ImGui::SameLine();
+            if (ImGui::Button("Aplicar")){
+                Coord midPoint = shape.getMidPoint();
+                for (Coord &point : shape.points){
+                    point.x = midPoint.x + (point.x - midPoint.x)*scale;
+                    point.y = midPoint.y + (point.y - midPoint.y)*scale;
+                }
+            }
+
+            if (shape.type == curve){
+                static float t = 0.5;
+
+                ImGui::Separator();
+                ImGui::Text("Opciones de curva:");
+
+                ImGui::SliderFloat("##t", &t, 0.001f, 1.0f);
+                ImGui::SameLine();
+                if (ImGui::Button("Subdividir")){
+                    Shape left = shape;
+                    Shape right = shape;
+
+                    shape.split(left, right, t);
+
+                    right.selected = false;
+                    left.selected = false;
+
+                    shapes.insert(shapes.end(), {left, right});                    
+
+                    shapes.erase(shapes.begin() + currentShape);
+
+                    currentShape = -1;
+                    currentVertice = -1;
+                }
+
+                ImGui::Text("Grado actual: %d", shape.points.size());
+                ImGui::SameLine();
+                if (ImGui::Button("Aumentar grado")) shape.elevateDegree();                
+            }
         }
 
         ImGui::Separator();
@@ -1134,7 +1146,6 @@ public:
         ImGui::End();
     }
 
-    //Funciones mías :p
     void drawLine(Coord a, Coord b, Color color){
         int x, y, incy, inc2;
         bool inverted = false, negative = false;
@@ -1346,6 +1357,8 @@ public:
             ++x;
         }
 
+        d = height*(x*x+x) + width*(y*y-y) - width - width*height + height; //Recalculo el d pq daba problemas
+
         int s = 3*width;
         se = 2*height + 3*width;
 
@@ -1539,6 +1552,9 @@ public:
             return;
         }
 
+        file<<colorFondo.r<<colorFondo.g<<colorFondo.b<<std::endl;
+        file<<incompleteShape<<std::endl;
+
         for(Shape &shape: shapes)
             file<<shape.to_string()<<std::endl;
 
@@ -1560,13 +1576,16 @@ public:
         }
 
         shapes.clear();
-        qTree.clear();
-        incompleteShape = false;
         dibujando = false;
         currentShape = -1;
         currentVertice = -1;
 
         std::string line;
+
+        file>>colorFondo.r>>colorFondo.g>>colorFondo.b;
+        file>>incompleteShape;
+
+        std::getline(file, line);
 
         while (std::getline(file, line)) {
             std::stringstream ss(line);
@@ -1585,7 +1604,6 @@ public:
 
             shapes.push_back(temp);
             temp.points.clear();
-            qTree.addLast(shapes);
         }
 
         file.close();
